@@ -1,3 +1,4 @@
+import numpy as np
 import time
 import copy
 from functools import partial
@@ -112,6 +113,9 @@ class LLMEngine:
         self.num_prompt_tokens: List[Tuple[float, int]] = []
         # List of (timestamp, num_tokens)
         self.num_generation_tokens: List[Tuple[float, int]] = []
+
+        self.prompt_throughputs = []
+        self.decode_throughputs = []
 
     def _init_workers(self, distributed_init_method: str):
         # Lazy import the Worker to avoid importing torch.cuda/xformers
@@ -309,6 +313,7 @@ class LLMEngine:
                 for seq_group in scheduler_outputs.ignored_seq_groups
             ]
 
+        st = time.time()
         # Execute the model.
         output = self._run_workers(
             "execute_model",
@@ -320,12 +325,37 @@ class LLMEngine:
         # Update the scheduler with the model outputs.
         seq_groups = self.scheduler.update(output)
 
+        # Get the end time and fill in for prompts based on scheduler_outputs.prompt = True
+        # Get arrival time from seq group
+        # Add in a field within seqs to track prompt time as well
+        if scheduler_outputs.prompt_run:
+            self.prompt_throughputs.append(scheduler_outputs.num_batched_tokens / (time.time() - st))
+            for seq_group in seq_groups:
+                seq_group.time_to_first_token = time.time() - seq_group.arrival_time
+        else:
+            self.decode_throughputs.append(scheduler_outputs.num_batched_tokens / (time.time() - st))
+
         # Decode the sequences.
         self._decode_sequences(seq_groups)
         # Stop the sequences that meet the stopping criteria.
         self._stop_sequences(seq_groups)
         # Free the finished sequence groups.
+        # print("-----")
         self.scheduler.free_finished_seq_groups()
+
+        # finish all seq within a group explicitly
+        # not sure whether seq_groups within self.running map to here
+        # they seem to, but the time is too large to finish
+        # when do they complete?
+        # check id() of self.running and seq_groups
+        # seems something
+        # is the status set in stop sequences checked immediately in scheduler free finished seq groups?
+        # why the delay in decode end time?
+        # for seq_group in seq_groups:
+        #     for seq in seq_group.get_seqs():
+                # print("seq id: ", seq.seq_id, seq.status, hasattr(seq, "decode_end_time"))
+            # seq_group.is_finished()
+        # print("-----")
 
         # Create the outputs.
         request_outputs: List[RequestOutput] = []
@@ -400,6 +430,12 @@ class LLMEngine:
                     f"Pending: {len(self.scheduler.waiting)} reqs, "
                     f"GPU KV cache usage: {gpu_cache_usage * 100:.1f}%, "
                     f"CPU KV cache usage: {cpu_cache_usage * 100:.1f}%")
+        if self.decode_throughputs and self.prompt_throughputs:
+            for p in [50, 90, 95, 99]:
+                ptp = np.percentile(self.prompt_throughputs, p)
+                dtp = np.percentile(self.decode_throughputs, p)
+                print(f"p{p}: prompt_throughputs: {ptp:.2f} "
+                  f"p{p}: decode_throughputs: {dtp:.2f}")
         self.last_logging_time = now
 
     def _decode_sequences(self, seq_groups: List[SequenceGroup]) -> None:

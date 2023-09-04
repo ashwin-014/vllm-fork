@@ -39,7 +39,13 @@ async def generate(request: Request) -> Response:
             text_outputs = [
                 prompt + output.text for output in request_output.outputs
             ]
-            ret = {"text": text_outputs}
+            # ret = {"text": text_outputs}
+            ret = {
+                "text": text_outputs,
+                "time_to_first_token": request_output.time_to_first_token,
+                "average_decode_throughput": request_output.average_decode_throughput,
+                "prompt_throughput": request_output.prompt_throughput,
+            }
             yield (json.dumps(ret) + "\0").encode("utf-8")
 
     async def abort_request() -> None:
@@ -63,7 +69,13 @@ async def generate(request: Request) -> Response:
     assert final_output is not None
     prompt = final_output.prompt
     text_outputs = [prompt + output.text for output in final_output.outputs]
-    ret = {"text": text_outputs}
+    # ret = {"text": text_outputs}
+    ret = {
+        "text": text_outputs,
+        "time_to_first_token": request_output.time_to_first_token,
+        "average_decode_throughput": request_output.average_decode_throughput,
+        "prompt_throughput": request_output.prompt_throughput,
+    }
     return JSONResponse(ret)
 
 

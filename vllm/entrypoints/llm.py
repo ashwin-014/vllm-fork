@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
@@ -160,3 +160,32 @@ class LLM:
         # its previous requests.
         outputs = sorted(outputs, key=lambda x: int(x.request_id))
         return outputs
+
+
+    @staticmethod
+    def get_stats(request_outputs) -> Tuple[float, float, float]:
+        import numpy as np
+        prompt_throughputs = []
+        time_to_first_tokens = []
+        average_decode_throughputs = []
+        for request_output in request_outputs:
+            time_to_first_tokens.append(request_output.time_to_first_token)
+            average_decode_throughputs.append(request_output.average_decode_throughput)
+            prompt_throughputs.append(request_output.prompt_throughput)
+        
+        prompt_throughputs = np.array(prompt_throughputs)
+        time_to_first_tokens = np.array(time_to_first_tokens)
+        average_decode_throughputs = np.array(average_decode_throughputs)
+
+        prompt_throughputs = prompt_throughputs[prompt_throughputs != -1]
+        time_to_first_tokens = time_to_first_tokens[time_to_first_tokens != -1]
+        average_decode_throughputs = average_decode_throughputs[average_decode_throughputs != -1]
+
+        for percentile in [50, 90, 95, 99]:
+            prompt_throughput = np.percentile(prompt_throughputs, percentile)
+            time_to_first_token = np.percentile(time_to_first_tokens, percentile)
+            average_decode_throughput = np.percentile(average_decode_throughputs, percentile)
+
+            print(f"P{percentile}: ")
+            print(f"TTF: {time_to_first_token} \t Prompt Throughput: {prompt_throughput} \t Decode Throughput: {average_decode_throughput}")
+        return time_to_first_token, prompt_throughput, average_decode_throughput

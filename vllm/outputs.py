@@ -1,3 +1,4 @@
+import math
 from typing import Dict, List, Optional
 
 from vllm.sequence import SequenceGroup, SequenceStatus
@@ -63,12 +64,21 @@ class RequestOutput:
         prompt_token_ids: List[int],
         outputs: List[CompletionOutput],
         finished: bool,
+        time_to_first_token: float = 0.0,
+        average_decode_throughput: float = 0.0,
+        decode_end_times: float = 0.0,
+        seq_output_lens: float = 0.0
     ) -> None:
         self.request_id = request_id
         self.prompt = prompt
         self.prompt_token_ids = prompt_token_ids
         self.outputs = outputs
         self.finished = finished
+        self.time_to_first_token = time_to_first_token
+        self.prompt_throughput = len(prompt_token_ids) / time_to_first_token
+        self.average_decode_throughput = average_decode_throughput
+        self.decode_end_times = decode_end_times
+        self.seq_output_lens = seq_output_lens
 
     @classmethod
     def from_seq_group(cls, seq_group: SequenceGroup) -> "RequestOutput":
@@ -83,6 +93,9 @@ class RequestOutput:
 
         # Create the outputs.
         outputs: List[CompletionOutput] = []
+        decode_throughputs = []
+        decode_end_times = []
+        seq_output_lens = []
         for seq in top_n_seqs:
             logprobs = seq.output_logprobs
             if seq_group.sampling_params.logprobs is None:
@@ -96,13 +109,21 @@ class RequestOutput:
                                       seq.get_cumulative_logprob(), logprobs,
                                       finshed_reason)
             outputs.append(output)
+            # print("finshed_reason: ", finshed_reason)
+            if finshed_reason:
+                decode_end_times.append(seq.decode_end_time)
+                seq_output_lens.append(seq.get_output_len())
+                decode_throughputs.append(
+                    seq.get_output_len() / (seq.decode_end_time - seq_group.arrival_time - seq_group.time_to_first_token)
+                )
+        decode_throughput = sum(decode_throughputs) / len(decode_throughputs) if decode_throughputs else -1
 
         # Every sequence in the sequence group should have the same prompt.
         prompt = top_n_seqs[0].prompt
         prompt_token_ids = top_n_seqs[0].data.prompt_token_ids
         finished = seq_group.is_finished()
         return cls(seq_group.request_id, prompt, prompt_token_ids, outputs,
-                   finished)
+                   finished, seq_group.time_to_first_token, decode_throughput)
 
     def __repr__(self) -> str:
         return (f"RequestOutput(request_id={self.request_id}, "

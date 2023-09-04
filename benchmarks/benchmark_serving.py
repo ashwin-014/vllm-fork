@@ -29,6 +29,7 @@ from vllm.transformers_utils.tokenizer import get_tokenizer
 
 # (prompt len, output len, latency)
 REQUEST_LATENCY: List[Tuple[int, int, float]] = []
+CUSTOM_STATS: List[Tuple[float, float, float]] = []
 
 
 def sample_requests(
@@ -151,6 +152,7 @@ async def send_request(
     request_end_time = time.time()
     request_latency = request_end_time - request_start_time
     REQUEST_LATENCY.append((prompt_len, output_len, request_latency))
+    CUSTOM_STATS.append([output["time_to_first_token"], output["prompt_throughput"], output["average_decode_throughput"]])
 
 
 async def benchmark(
@@ -169,6 +171,32 @@ async def benchmark(
                                                 best_of, use_beam_search))
         tasks.append(task)
     await asyncio.gather(*tasks)
+
+
+def get_custom_stats():
+    prompt_throughputs = []
+    time_to_first_tokens = []
+    average_decode_throughputs = []
+    for op in CUSTOM_STATS:
+        time_to_first_tokens.append(op[0])
+        prompt_throughputs.append(op[1])
+        average_decode_throughputs.append(op[2])
+
+    prompt_throughputs = np.array(prompt_throughputs)
+    time_to_first_tokens = np.array(time_to_first_tokens)
+    average_decode_throughputs = np.array(average_decode_throughputs)
+
+    prompt_throughputs = prompt_throughputs[prompt_throughputs != -1]
+    time_to_first_tokens = time_to_first_tokens[time_to_first_tokens != -1]
+    average_decode_throughputs = average_decode_throughputs[average_decode_throughputs != -1]
+
+    for percentile in [50, 90, 95, 99]:
+        prompt_throughput = np.percentile(prompt_throughputs, percentile)
+        time_to_first_token = np.percentile(time_to_first_tokens, percentile)
+        average_decode_throughput = np.percentile(average_decode_throughputs, percentile)
+
+        print(f"P{percentile}: ")
+        print(f"TTF: {time_to_first_token} \t Prompt Throughput: {prompt_throughput} \t Decode Throughput: {average_decode_throughput}")
 
 
 def main(args: argparse.Namespace):
@@ -202,6 +230,7 @@ def main(args: argparse.Namespace):
     ])
     print("Average latency per output token: "
           f"{avg_per_output_token_latency:.2f} s")
+    get_custom_stats()
 
 
 if __name__ == "__main__":

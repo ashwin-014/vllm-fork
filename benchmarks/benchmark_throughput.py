@@ -8,6 +8,7 @@ from typing import List, Tuple
 import torch
 from transformers import AutoModelForCausalLM, PreTrainedTokenizerBase
 from tqdm import tqdm
+import huggingface_hub
 
 from vllm import LLM, SamplingParams
 from vllm.transformers_utils.tokenizer import get_tokenizer
@@ -96,9 +97,9 @@ def run_vllm(
 
     start = time.time()
     # FIXME(woosuk): Do use internal method.
-    llm._run_engine(use_tqdm=True)
+    request_outputs = llm._run_engine(use_tqdm=True)
     end = time.time()
-    return end - start
+    return end - start, request_outputs
 
 
 def run_hf(
@@ -169,7 +170,7 @@ def main(args: argparse.Namespace):
     requests = sample_requests(args.dataset, args.num_prompts, tokenizer)
 
     if args.backend == "vllm":
-        elapsed_time = run_vllm(
+        elapsed_time, request_outputs = run_vllm(
             requests, args.model, args.tokenizer, args.tensor_parallel_size,
             args.seed, args.n, args.use_beam_search, args.trust_remote_code)
     elif args.backend == "hf":
@@ -183,8 +184,18 @@ def main(args: argparse.Namespace):
         prompt_len + output_len
         for _, prompt_len, output_len in requests
     )
+    total_op_num_tokens = sum(
+        output_len
+        for _, prompt_len, output_len in requests
+    )
+    total_prompt_num_tokens = sum(
+        prompt_len
+        for _, prompt_len, output_len in requests
+    )
     print(f"Throughput: {len(requests) / elapsed_time:.2f} requests/s, "
           f"{total_num_tokens / elapsed_time:.2f} tokens/s")
+    print(f"Prompt throughput: {total_prompt_num_tokens / elapsed_time}, Output throughput: {total_op_num_tokens / elapsed_time}")
+    LLM.get_stats(request_outputs)
 
 
 if __name__ == "__main__":
@@ -218,4 +229,5 @@ if __name__ == "__main__":
     if args.tokenizer is None:
         args.tokenizer = args.model
 
+    huggingface_hub.login(token="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")
     main(args)
